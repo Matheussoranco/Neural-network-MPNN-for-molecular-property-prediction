@@ -149,3 +149,17 @@ def graphs_from_smiles(smiles_list):
         tf.ragged.constant(bond_features_list, dtype=tf.float32),
         tf.ragged.constant(pair_indices_list, dtype=tf.int64),
     )
+
+permuted_indices = np.random.permutation(np.arange(df.shape[0]))
+
+train_index = permuted_indices[: int(df.shape[0] * 0.8)]
+x_train = graphs_from_smiles(df.iloc[train_index].smiles)
+y_train = df.iloc[train_index].p_np
+
+valid_index = permuted_indices[int(df.shape[0] * 0.8) : int(df.shape[0] * 0.99)]
+x_valid = graphs_from_smiles(df.iloc[valid_index].smiles)
+y_valid = df.iloc[valid_index].p_np
+
+test_index = permuted_indices[int(df.shape[0] * 0.99) :]
+x_test = graphs_from_smiles(df.iloc[test_index].smiles)
+y_test = df.iloc[test_index].p_np
