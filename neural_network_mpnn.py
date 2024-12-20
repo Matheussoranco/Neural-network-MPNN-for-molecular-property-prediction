@@ -163,3 +163,15 @@ y_valid = df.iloc[valid_index].p_np
 test_index = permuted_indices[int(df.shape[0] * 0.99) :]
 x_test = graphs_from_smiles(df.iloc[test_index].smiles)
 y_test = df.iloc[test_index].p_np
+
+#Testing functions
+print(f"Nome:\t{df.name[100]}\nSMILES:\t{df.smiles[100]}\nBBBP:\t{df.p_np[100]}")
+molecule = molecule_from_smiles(df.iloc[100].smiles)
+print("Molecula:")
+molecule
+
+graph = graph_from_molecule(molecule)
+print("Grafo (Incluindo self-loops):")
+print("\tatom features\t", graph[0].shape)
+print("\tbond features\t", graph[1].shape)
+print("\tpair indices\t", graph[2].shape)
