@@ -47,3 +47,19 @@ class Featurizer:
                 continue
             output[feature_mapping[feature]] = 1.0
         return output
+
+class AtomFeaturizer(Featurizer):
+    def __init__(self, allowable_sets):
+        super().__init__(allowable_sets)
+
+    def symbol(self, atom):
+        return atom.GetSymbol()
+
+    def n_valence(self, atom):
+        return atom.GetTotalValence()
+
+    def n_hydrogens(self, atom):
+        return atom.GetTotalNumHs()
+
+    def hybridization(self, atom):
+        return atom.GetHybridization().name.lower()
