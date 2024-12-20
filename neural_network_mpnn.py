@@ -63,3 +63,22 @@ class AtomFeaturizer(Featurizer):
 
     def hybridization(self, atom):
         return atom.GetHybridization().name.lower()
+    
+class BondFeaturizer(Featurizer):
+    def __init__(self, allowable_sets):
+        super().__init__(allowable_sets)
+        self.dim += 1
+
+    def encode(self, bond):
+        output = np.zeros((self.dim,))
+        if bond is None:
+            output[-1] = 1.0
+            return output
+        output = super().encode(bond)
+        return output
+
+    def bond_type(self, bond):
+        return bond.GetBondType().name.lower()
+
+    def conjugated(self, bond):
+        return bond.GetIsConjugated()
