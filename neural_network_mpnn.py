@@ -28,3 +28,22 @@ csv_path = keras.utils.get_file(
 
 df = pd.read_csv(csv_path, usecols=[1, 2, 3])
 df.iloc[96:104]
+
+
+class Featurizer:
+    def __init__(self, allowable_sets):
+        self.dim = 0
+        self.features_mapping = {}
+        for k, s in allowable_sets.items():
+            s = sorted(list(s))
+            self.features_mapping[k] = dict(zip(s, range(self.dim, len(s) + self.dim)))
+            self.dim += len(s)
+
+    def encode(self, inputs):
+        output = np.zeros((self.dim,))
+        for name_feature, feature_mapping in self.features_mapping.items():
+            feature = getattr(self, name_feature)(inputs)
+            if feature not in feature_mapping:
+                continue
+            output[feature_mapping[feature]] = 1.0
+        return output
