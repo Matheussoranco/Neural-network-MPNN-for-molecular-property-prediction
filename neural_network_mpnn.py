@@ -82,3 +82,19 @@ class BondFeaturizer(Featurizer):
 
     def conjugated(self, bond):
         return bond.GetIsConjugated()
+    
+atom_featurizer = AtomFeaturizer(
+    allowable_sets={
+        "symbol": {"B", "Br", "C", "Ca", "Cl", "F", "H", "I", "N", "Na", "O", "P", "S"},
+        "n_valence": {0, 1, 2, 3, 4, 5, 6},
+        "n_hydrogens": {0, 1, 2, 3, 4},
+        "hybridization": {"s", "sp", "sp2", "sp3"},
+    }
+)
+
+bond_featurizer = BondFeaturizer(
+    allowable_sets={
+        "bond_type": {"single", "double", "triple", "aromatic"},
+        "conjugated": {True, False},
+    }
+)
