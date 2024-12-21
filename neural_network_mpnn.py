@@ -226,11 +226,29 @@ class EdgeNetwork(layers.Layer):
             name="bias",
         )
         self.built = True
-
+        
     def call(self, inputs):
         atom_features, bond_features, pair_indices = inputs
 
-        aggregated_features = self.message_step([atom_features, bond_features, pair_indices])
+        bond_features = tf.matmul(bond_features, self.kernel) + self.bias
+
+        current_atom_dim = tf.shape(atom_features)[-2]
+
+        bond_features = tf.reshape(bond_features, (-1, self.atom_dim, self.atom_dim))
+        bond_features = tf.reshape(bond_features, (-1, current_atom_dim, self.units))
+        if self.atom_dim != self.units:
+            bond_features = tf.transpose(bond_features, perm=[0, 2, 1])
+
+        atom_features_neighbors = tf.gather(atom_features, pair_indices[:, 1])
+        atom_features_neighbors = tf.expand_dims(atom_features_neighbors, axis=-1)
+
+        transformed_features = tf.matmul(bond_features, atom_features_neighbors)
+        transformed_features = tf.squeeze(transformed_features, axis=-1)
+        aggregated_features = tf.math.unsorted_segment_sum(
+            transformed_features,
+            pair_indices[:, 0],
+            num_segments=tf.shape(atom_features)[0],
+        )
         return aggregated_features
 
 class MessagePassing(layers.Layer):
@@ -252,17 +270,8 @@ class MessagePassing(layers.Layer):
     def call(self, inputs):
         atom_features, bond_features, pair_indices = inputs
 
-        atom_features_updated = tf.pad(atom_features, [(0, 0), (0, self.pad_length)])
-
-        for i in range(self.steps):
-            atom_features_aggregated = self.message_step(
-                [atom_features_updated, bond_features, pair_indices]
-            )
-
-            atom_features_updated, _ = self.update_step(
-                atom_features_aggregated, atom_features_updated
-            )
-        return atom_features_updated
+        aggregated_features = self.message_step([atom_features, bond_features, pair_indices])
+        return aggregated_features
     
 class PartitionPadding(layers.Layer):
     def __init__(self, batch_size, **kwargs):
