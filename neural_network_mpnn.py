@@ -210,16 +210,17 @@ class EdgeNetwork(layers.Layer):
           super().__init__(**kwargs)
           self.atom_dim = atom_dim
           self.bond_dim = bond_dim
+          
     def build(self, input_shape):
         self.atom_dim = input_shape[0][-1]
         self.bond_dim = input_shape[1][-1]
         self.kernel = self.add_weight(
-            shape=(self.bond_dim, self.atom_dim * self.atom_dim),
+            shape=(self.bond_dim, self.units * self.units),
             initializer="glorot_uniform",
             name="kernel",
         )
         self.bias = self.add_weight(
-            shape=(self.atom_dim, self.atom_dim),
+            shape=(self.units, self.units),
             initializer="zeros",
             name="bias",
         )
