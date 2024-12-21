@@ -204,3 +204,36 @@ def MPNNDataset(X, y, batch_size=32, shuffle=False):
     if shuffle:
         dataset = dataset.shuffle(1024)
     return dataset.batch(batch_size).map(prepare_batch, -1).prefetch(-1)
+
+class EdgeNetwork(layers.Layer):
+    def build(self, input_shape):
+        self.atom_dim = input_shape[0][-1]
+        self.bond_dim = input_shape[1][-1]
+        self.kernel = self.add_weight(
+            shape=(self.bond_dim, self.atom_dim * self.atom_dim),
+            initializer="glorot_uniform",
+            name="kernel",
+        )
+        self.bias = self.add_weight(
+            shape=(self.atom_dim * self.atom_dim), initializer="zeros", name="bias",
+        )
+        self.built = True
+
+    def call(self, inputs):
+        atom_features, bond_features, pair_indices = inputs
+
+        bond_features = tf.matmul(bond_features, self.kernel) + self.bias
+
+        bond_features = tf.reshape(bond_features, (-1, self.atom_dim, self.atom_dim))
+
+        atom_features_neighbors = tf.gather(atom_features, pair_indices[:, 1])
+        atom_features_neighbors = tf.expand_dims(atom_features_neighbors, axis=-1)
+
+        transformed_features = tf.matmul(bond_features, atom_features_neighbors)
+        transformed_features = tf.squeeze(transformed_features, axis=-1)
+        aggregated_features = tf.math.unsorted_segment_sum(
+            transformed_features,
+            pair_indices[:, 0],
+            num_segments=tf.shape(atom_features)[0],
+        )
+        return aggregated_features
