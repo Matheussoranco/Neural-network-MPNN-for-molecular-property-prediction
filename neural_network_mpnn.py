@@ -380,3 +380,10 @@ plt.plot(history.history["val_AUC"], label="valid AUC")
 plt.xlabel("Epochs", fontsize=16)
 plt.ylabel("AUC", fontsize=16)
 plt.legend(fontsize=16)
+
+molecules = [molecule_from_smiles(df.smiles.values[index]) for index in test_index]
+y_true = [df.p_np.values[index] for index in test_index]
+y_pred = tf.squeeze(mpnn.predict(test_dataset), axis=1)
+
+legends = [f"y_true/y_pred = {y_true[i]}/{y_pred[i]:.2f}" for i in range(len(y_true))]
+MolsToGridImage(molecules, molsPerRow=4, legends=legends)
