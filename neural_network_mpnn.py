@@ -361,3 +361,22 @@ mpnn.compile(
 )
 
 keras.utils.plot_model(mpnn, show_dtype=True, show_shapes=True)
+
+train_dataset = MPNNDataset(x_train, y_train)
+valid_dataset = MPNNDataset(x_valid, y_valid)
+test_dataset = MPNNDataset(x_test, y_test)
+
+history = mpnn.fit(
+    train_dataset,
+    validation_data=valid_dataset,
+    epochs=40,
+    verbose=2,
+    class_weight={0: 2.0, 1: 0.5},
+)
+
+plt.figure(figsize=(10, 6))
+plt.plot(history.history["AUC"], label="train AUC")
+plt.plot(history.history["val_AUC"], label="valid AUC")
+plt.xlabel("Epochs", fontsize=16)
+plt.ylabel("AUC", fontsize=16)
+plt.legend(fontsize=16)
