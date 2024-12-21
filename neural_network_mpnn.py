@@ -253,7 +253,9 @@ class MessagePassing(layers.Layer):
         self.bond_dim = bond_dim 
 
     def build(self, input_shape):
-        #self.atom_dim = input_shape[0][-1]
+        self.atom_dim = input_shape[0][-1]
+        self.bond_dim = input_shape[1][-1]
+        self.message_step = EdgeNetwork(atom_dim=self.atom_dim, bond_dim=self.bond_dim)
         self.message_step = EdgeNetwork()
         self.pad_length = max(0, self.units - self.atom_dim)
         self.update_step = layers.GRUCell(self.units)
