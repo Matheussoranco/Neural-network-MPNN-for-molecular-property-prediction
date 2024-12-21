@@ -230,20 +230,7 @@ class EdgeNetwork(layers.Layer):
     def call(self, inputs):
         atom_features, bond_features, pair_indices = inputs
 
-        bond_features = tf.matmul(bond_features, self.kernel) + self.bias
-
-        bond_features = tf.reshape(bond_features, (-1, self.atom_dim, self.atom_dim))
-
-        atom_features_neighbors = tf.gather(atom_features, pair_indices[:, 1])
-        atom_features_neighbors = tf.expand_dims(atom_features_neighbors, axis=-1)
-
-        transformed_features = tf.matmul(bond_features, atom_features_neighbors)
-        transformed_features = tf.squeeze(transformed_features, axis=-1)
-        aggregated_features = tf.math.unsorted_segment_sum(
-            transformed_features,
-            pair_indices[:, 0],
-            num_segments=tf.shape(atom_features)[0],
-        )
+        aggregated_features = self.message_step([atom_features, bond_features, pair_indices])
         return aggregated_features
 
 class MessagePassing(layers.Layer):
