@@ -316,3 +316,48 @@ class TransformerEncoderReadout(layers.Layer):
         proj_input = self.layernorm_1(x + attention_output)
         proj_output = self.layernorm_2(proj_input + self.dense_proj(proj_input))
         return self.average_pooling(proj_output)
+    
+def MPNNModel(
+    atom_dim,
+    bond_dim,
+    batch_size=32,
+    message_units=64,
+    message_steps=4,
+    num_attention_heads=8,
+    dense_units=512,
+):
+
+    atom_features = layers.Input((atom_dim), dtype="float32", name="atom_features")
+    bond_features = layers.Input((bond_dim), dtype="float32", name="bond_features")
+    pair_indices = layers.Input((2), dtype="int32", name="pair_indices")
+    molecule_indicator = layers.Input((), dtype="int32", name="molecule_indicator")
+
+    x = MessagePassing(message_units, message_steps)(
+        [atom_features, bond_features, pair_indices]
+    )
+
+    x = TransformerEncoderReadout(
+        num_attention_heads, message_units, dense_units, batch_size
+    )([x, molecule_indicator])
+
+    x = layers.Dense(dense_units, activation="relu")(x)
+    x = layers.Dense(1, activation="sigmoid")(x)
+
+    model = keras.Model(
+        inputs=[atom_features, bond_features, pair_indices, molecule_indicator],
+        outputs=[x],
+    )
+    return model
+
+
+mpnn = MPNNModel(
+    atom_dim=x_train[0][0][0].shape[0], bond_dim=x_train[1][0][0].shape[0],
+)
+
+mpnn.compile(
+    loss=keras.losses.BinaryCrossentropy(),
+    optimizer=keras.optimizers.Adam(learning_rate=5e-4),
+    metrics=[keras.metrics.AUC(name="AUC")],
+)
+
+keras.utils.plot_model(mpnn, show_dtype=True, show_shapes=True)
