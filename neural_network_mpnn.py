@@ -300,18 +300,22 @@ class TransformerEncoderReadout(layers.Layer):
         self.partition_padding = PartitionPadding(batch_size)
         self.attention = layers.MultiHeadAttention(num_heads, embed_dim)
         self.dense_proj = keras.Sequential(
-            [layers.Dense(dense_dim, activation="relu"), layers.Dense(embed_dim),]
+            [layers.Dense(dense_dim, activation="relu"), layers.Dense(embed_dim),
+             layers.Dense(embed_dim),]
         )
         self.layernorm_1 = layers.LayerNormalization()
         self.layernorm_2 = layers.LayerNormalization()
         self.average_pooling = layers.GlobalAveragePooling1D()
 
     def call(self, inputs):
-        x = self.partition_padding(inputs)
+        atom_features, molecule_indicator = inputs
+        x = self.partition_padding([atom_features, molecule_indicator])
         padding_mask = tf.reduce_any(tf.not_equal(x, 0.0), axis=-1)
         padding_mask = padding_mask[:, tf.newaxis, tf.newaxis, :]
         attention_output = self.attention(x, x, attention_mask=padding_mask)
         proj_input = self.layernorm_1(x + attention_output)
+        proj_input_shape = tf.shape(proj_input)[-1]  
+        self.dense_proj.layers[-1] = layers.Dense(proj_input_shape)  
         proj_output = self.layernorm_2(proj_input + self.dense_proj(proj_input))
         return self.average_pooling(proj_output)
     
