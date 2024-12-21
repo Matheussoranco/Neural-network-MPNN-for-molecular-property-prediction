@@ -232,12 +232,9 @@ class EdgeNetwork(layers.Layer):
 
         bond_features = tf.matmul(bond_features, self.kernel) + self.bias
 
-        current_atom_dim = tf.shape(atom_features)[-2]
+        num_atoms = tf.shape(atom_features)[0]
 
-        bond_features = tf.reshape(bond_features, (-1, self.atom_dim, self.atom_dim))
-        bond_features = tf.reshape(bond_features, (-1, current_atom_dim, self.units))
-        if self.atom_dim != self.units:
-            bond_features = tf.transpose(bond_features, perm=[0, 2, 1])
+        bond_features = tf.reshape(bond_features, (-1, num_atoms, self.units)) 
 
         atom_features_neighbors = tf.gather(atom_features, pair_indices[:, 1])
         atom_features_neighbors = tf.expand_dims(atom_features_neighbors, axis=-1)
