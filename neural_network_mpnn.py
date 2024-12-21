@@ -206,21 +206,22 @@ def MPNNDataset(X, y, batch_size=32, shuffle=False):
     return dataset.batch(batch_size).map(prepare_batch, -1).prefetch(-1)
 
 class EdgeNetwork(layers.Layer):
-    def __init__(self, atom_dim, bond_dim, **kwargs):
+    def __init__(self, atom_dim, bond_dim, units, **kwargs):
           super().__init__(**kwargs)
           self.atom_dim = atom_dim
           self.bond_dim = bond_dim
+          self.units = units
           
     def build(self, input_shape):
         self.atom_dim = input_shape[0][-1]
         self.bond_dim = input_shape[1][-1]
         self.kernel = self.add_weight(
-            shape=(self.bond_dim, self.units * self.units),
+            shape=(self.bond_dim, self.units),
             initializer="glorot_uniform",
             name="kernel",
         )
         self.bias = self.add_weight(
-            shape=(self.units, self.units),
+            shape=(self.units,),
             initializer="zeros",
             name="bias",
         )
@@ -256,8 +257,7 @@ class MessagePassing(layers.Layer):
     def build(self, input_shape):
         self.atom_dim = input_shape[0][-1]
         self.bond_dim = input_shape[1][-1]
-        self.message_step = EdgeNetwork(atom_dim=self.atom_dim, bond_dim=self.bond_dim)
-        self.message_step = EdgeNetwork()
+        self.message_step = EdgeNetwork(atom_dim=self.atom_dim, bond_dim=self.bond_dim, units=self.units)  
         self.pad_length = max(0, self.units - self.atom_dim)
         self.update_step = layers.GRUCell(self.units)
         self.built = True
