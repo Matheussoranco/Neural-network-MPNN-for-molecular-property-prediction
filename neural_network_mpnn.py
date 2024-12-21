@@ -292,7 +292,7 @@ class PartitionPadding(layers.Layer):
         gather_indices = tf.where(tf.reduce_sum(atom_features_stacked, (1, 2)) != 0)
         gather_indices = tf.squeeze(gather_indices, axis=-1)
         return tf.gather(atom_features_stacked, gather_indices, axis=0)
-    
+
 class TransformerEncoderReadout(layers.Layer):
     def __init__(
         self, num_heads=8, embed_dim=64, dense_dim=512, batch_size=32, **kwargs
