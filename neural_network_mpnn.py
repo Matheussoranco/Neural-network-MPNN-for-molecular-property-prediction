@@ -265,3 +265,30 @@ class MessagePassing(layers.Layer):
                 atom_features_aggregated, atom_features_updated
             )
         return atom_features_updated
+    
+class PartitionPadding(layers.Layer):
+    def __init__(self, batch_size, **kwargs):
+        super().__init__(**kwargs)
+        self.batch_size = batch_size
+
+    def call(self, inputs):
+
+        atom_features, molecule_indicator = inputs
+
+        atom_features_partitioned = tf.dynamic_partition(
+            atom_features, molecule_indicator, self.batch_size
+        )
+
+        num_atoms = [tf.shape(f)[0] for f in atom_features_partitioned]
+        max_num_atoms = tf.reduce_max(num_atoms)
+        atom_features_stacked = tf.stack(
+            [
+                tf.pad(f, [(0, max_num_atoms - n), (0, 0)])
+                for f, n in zip(atom_features_partitioned, num_atoms)
+            ],
+            axis=0,
+        )
+
+        gather_indices = tf.where(tf.reduce_sum(atom_features_stacked, (1, 2)) != 0)
+        gather_indices = tf.squeeze(gather_indices, axis=-1)
+        return tf.gather(atom_features_stacked, gather_indices, axis=0)
