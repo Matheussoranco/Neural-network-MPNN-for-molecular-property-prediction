@@ -338,6 +338,12 @@ def MPNNModel(
         [atom_features, bond_features, pair_indices]
     )
 
+    x = layers.Dense(message_units, activation="relu")(x)
+
+    x = TransformerEncoderReadout(
+        num_attention_heads, message_units, dense_units, batch_size
+    )([x, molecule_indicator])
+
     x = TransformerEncoderReadout(
         num_attention_heads, message_units, dense_units, batch_size
     )([x, molecule_indicator])
@@ -350,6 +356,19 @@ def MPNNModel(
         outputs=[x],
     )
     return model
+
+
+mpnn = MPNNModel(
+    atom_dim=x_train[0][0][0].shape[0], bond_dim=x_train[1][0][0].shape[0],
+)
+
+mpnn.compile(
+    loss=keras.losses.BinaryCrossentropy(),
+    optimizer=keras.optimizers.Adam(learning_rate=5e-4),
+    metrics=[keras.metrics.AUC(name="AUC")],
+)
+
+keras.utils.plot_model(mpnn, show_dtype=True, show_shapes=True)
 
 
 mpnn = MPNNModel(
