@@ -211,7 +211,8 @@ class EdgeNetwork(layers.Layer):
           self.atom_dim = atom_dim
           self.bond_dim = bond_dim
           self.units = units
-          
+
+
     def build(self, input_shape):
         self.atom_dim = input_shape[0][-1]
         self.bond_dim = input_shape[1][-1]
@@ -226,21 +227,18 @@ class EdgeNetwork(layers.Layer):
             name="bias",
         )
         self.built = True
-        
+
     def call(self, inputs):
         atom_features, bond_features, pair_indices = inputs
 
         bond_features = tf.matmul(bond_features, self.kernel) + self.bias
 
-        num_atoms = tf.shape(atom_features)[0]
-
-        bond_features = tf.reshape(bond_features, (-1, num_atoms, self.units)) 
+        bond_features = tf.reshape(bond_features, (-1, self.units)) 
 
         atom_features_neighbors = tf.gather(atom_features, pair_indices[:, 1])
-        atom_features_neighbors = tf.expand_dims(atom_features_neighbors, axis=-1)
-
-        transformed_features = tf.matmul(bond_features, atom_features_neighbors)
-        transformed_features = tf.squeeze(transformed_features, axis=-1)
+        atom_features_neighbors = tf.reshape(atom_features_neighbors, (-1, self.atom_dim)) 
+        
+        transformed_features = bond_features * atom_features_neighbors
         aggregated_features = tf.math.unsorted_segment_sum(
             transformed_features,
             pair_indices[:, 0],
@@ -253,8 +251,6 @@ class MessagePassing(layers.Layer):
         super().__init__(**kwargs)
         self.units = units
         self.steps = steps
-        self.atom_dim = atom_dim
-        self.bond_dim = bond_dim 
 
     def build(self, input_shape):
         self.atom_dim = input_shape[0][-1]
