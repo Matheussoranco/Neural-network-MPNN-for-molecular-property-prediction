@@ -292,3 +292,27 @@ class PartitionPadding(layers.Layer):
         gather_indices = tf.where(tf.reduce_sum(atom_features_stacked, (1, 2)) != 0)
         gather_indices = tf.squeeze(gather_indices, axis=-1)
         return tf.gather(atom_features_stacked, gather_indices, axis=0)
+    
+class TransformerEncoderReadout(layers.Layer):
+    def __init__(
+        self, num_heads=8, embed_dim=64, dense_dim=512, batch_size=32, **kwargs
+    ):
+        super().__init__(**kwargs)
+
+        self.partition_padding = PartitionPadding(batch_size)
+        self.attention = layers.MultiHeadAttention(num_heads, embed_dim)
+        self.dense_proj = keras.Sequential(
+            [layers.Dense(dense_dim, activation="relu"), layers.Dense(embed_dim),]
+        )
+        self.layernorm_1 = layers.LayerNormalization()
+        self.layernorm_2 = layers.LayerNormalization()
+        self.average_pooling = layers.GlobalAveragePooling1D()
+
+    def call(self, inputs):
+        x = self.partition_padding(inputs)
+        padding_mask = tf.reduce_any(tf.not_equal(x, 0.0), axis=-1)
+        padding_mask = padding_mask[:, tf.newaxis, tf.newaxis, :]
+        attention_output = self.attention(x, x, attention_mask=padding_mask)
+        proj_input = self.layernorm_1(x + attention_output)
+        proj_output = self.layernorm_2(proj_input + self.dense_proj(proj_input))
+        return self.average_pooling(proj_output)
