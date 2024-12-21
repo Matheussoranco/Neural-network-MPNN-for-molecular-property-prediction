@@ -327,9 +327,9 @@ def MPNNModel(
     dense_units=512,
 ):
 
-    atom_features = layers.Input((atom_dim), dtype="float32", name="atom_features")
-    bond_features = layers.Input((bond_dim), dtype="float32", name="bond_features")
-    pair_indices = layers.Input((2), dtype="int32", name="pair_indices")
+    atom_features = layers.Input(shape=(atom_dim,), dtype="float32", name="atom_features")  
+    bond_features = layers.Input(shape=(bond_dim,), dtype="float32", name="bond_features")  
+    pair_indices = layers.Input(shape=(2,), dtype="int32", name="pair_indices")
     molecule_indicator = layers.Input((), dtype="int32", name="molecule_indicator")
 
     x = MessagePassing(message_units, message_steps)(
