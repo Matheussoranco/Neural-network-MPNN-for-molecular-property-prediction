@@ -263,6 +263,11 @@ class MessagePassing(layers.Layer):
     def call(self, inputs):
         atom_features, bond_features, pair_indices = inputs
 
+        # KNOWN BUG: this runs a SINGLE message-passing step and never uses
+        # self.steps or self.update_step (the GRUCell). A real MPNN iterates
+        # `steps` times, updating node state through the GRU each hop. Fixing it
+        # correctly also means reworking EdgeNetwork (its elementwise combine
+        # assumes units == atom_dim) and re-validating AUC on the BBBP split.
         aggregated_features = self.message_step([atom_features, bond_features, pair_indices])
         return aggregated_features
     
@@ -316,8 +321,6 @@ class TransformerEncoderReadout(layers.Layer):
         padding_mask = padding_mask[:, tf.newaxis, tf.newaxis, :]
         attention_output = self.attention(x, x, attention_mask=padding_mask)
         proj_input = self.layernorm_1(x + attention_output)
-        proj_input_shape = tf.shape(proj_input)[-1]  
-        self.dense_proj.layers[-1] = layers.Dense(proj_input_shape)  
         proj_output = self.layernorm_2(proj_input + self.dense_proj(proj_input))
         return self.average_pooling(proj_output)
     
@@ -346,10 +349,6 @@ def MPNNModel(
         num_attention_heads, message_units, dense_units, batch_size
     )([x, molecule_indicator])
 
-    x = TransformerEncoderReadout(
-        num_attention_heads, message_units, dense_units, batch_size
-    )([x, molecule_indicator])
-
     x = layers.Dense(dense_units, activation="relu")(x)
     x = layers.Dense(1, activation="sigmoid")(x)
 
@@ -358,19 +357,6 @@ def MPNNModel(
         outputs=[x],
     )
     return model
-
-
-mpnn = MPNNModel(
-    atom_dim=x_train[0][0][0].shape[0], bond_dim=x_train[1][0][0].shape[0],
-)
-
-mpnn.compile(
-    loss=keras.losses.BinaryCrossentropy(),
-    optimizer=keras.optimizers.Adam(learning_rate=5e-4),
-    metrics=[keras.metrics.AUC(name="AUC")],
-)
-
-keras.utils.plot_model(mpnn, show_dtype=True, show_shapes=True)
 
 
 mpnn = MPNNModel(
