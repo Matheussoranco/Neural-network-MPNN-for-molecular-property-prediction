@@ -1,8 +1,12 @@
-#pip -q install rdkit-pypi
+# NOTE: install deps beforehand via `pip install -r requirements.txt`
+# (do NOT pip-install from inside the script).
+# Study script — executes training on import/run. Do not import as a library.
 
 import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
+from collections import Counter
 
 import tensorflow as tf
 from tensorflow import keras
@@ -102,6 +106,8 @@ bond_featurizer = BondFeaturizer(
 def molecule_from_smiles(smiles):
     # MolFromSmiles(m, sanitize=True) should be equivalent to MolFromSmiles(m, sanitize=False) -> SanitizeMol(m) -> AssignStereochemistry(m, ...)
     molecule = Chem.MolFromSmiles(smiles, sanitize=False)
+    if molecule is None:
+        return None
 
     # If sanitization is unsuccessful, catch the error, and try again without the sanitization step that caused the error
     flag = Chem.SanitizeMol(molecule, catchErrors=True)
@@ -113,6 +119,8 @@ def molecule_from_smiles(smiles):
 
 
 def graph_from_molecule(molecule):
+    if molecule is None:
+        return None
     atom_features = []
     bond_features = []
     pair_indices = []
@@ -138,7 +146,11 @@ def graphs_from_smiles(smiles_list):
 
     for smiles in smiles_list:
         molecule = molecule_from_smiles(smiles)
+        if molecule is None:
+            continue
         atom_features, bond_features, pair_indices = graph_from_molecule(molecule)
+        if atom_features is None:
+            continue
 
         atom_features_list.append(atom_features)
         bond_features_list.append(bond_features)
@@ -149,32 +161,6 @@ def graphs_from_smiles(smiles_list):
         tf.ragged.constant(bond_features_list, dtype=tf.float32),
         tf.ragged.constant(pair_indices_list, dtype=tf.int64),
     )
-
-permuted_indices = np.random.permutation(np.arange(df.shape[0]))
-
-train_index = permuted_indices[: int(df.shape[0] * 0.8)]
-x_train = graphs_from_smiles(df.iloc[train_index].smiles)
-y_train = df.iloc[train_index].p_np
-
-valid_index = permuted_indices[int(df.shape[0] * 0.8) : int(df.shape[0] * 0.99)]
-x_valid = graphs_from_smiles(df.iloc[valid_index].smiles)
-y_valid = df.iloc[valid_index].p_np
-
-test_index = permuted_indices[int(df.shape[0] * 0.99) :]
-x_test = graphs_from_smiles(df.iloc[test_index].smiles)
-y_test = df.iloc[test_index].p_np
-
-#Testing functions
-print(f"Nome:\t{df.name[100]}\nSMILES:\t{df.smiles[100]}\nBBBP:\t{df.p_np[100]}")
-molecule = molecule_from_smiles(df.iloc[100].smiles)
-print("Molecula:")
-molecule
-
-graph = graph_from_molecule(molecule)
-print("Grafo (Incluindo self-loops):")
-print("\tatom features\t", graph[0].shape)
-print("\tbond features\t", graph[1].shape)
-print("\tpair indices\t", graph[2].shape)
 
 def prepare_batch(x_batch, y_batch):
     """
@@ -206,6 +192,13 @@ def MPNNDataset(X, y, batch_size=32, shuffle=False):
     return dataset.batch(batch_size).map(prepare_batch, -1).prefetch(-1)
 
 class EdgeNetwork(layers.Layer):
+    """Combine padrão MPNN: Dense sobre concat [h_vizinho, e_ij].
+
+    O antigo combine elementwise (proj(e_ij) * h_vizinho) exigia
+    atom_dim == units e falhava silenciosamente fora disso; concat+Dense
+    aceita qualquer (atom_dim, bond_dim) e é o padrão na literatura.
+    """
+
     def __init__(self, atom_dim, bond_dim, units, **kwargs):
           super().__init__(**kwargs)
           self.atom_dim = atom_dim
@@ -214,10 +207,9 @@ class EdgeNetwork(layers.Layer):
 
 
     def build(self, input_shape):
-        self.atom_dim = input_shape[0][-1]
-        self.bond_dim = input_shape[1][-1]
+        # Concat [vizinho (atom_dim), aresta (bond_dim)] -> units.
         self.kernel = self.add_weight(
-            shape=(self.bond_dim, self.units),
+            shape=(self.atom_dim + self.bond_dim, self.units),
             initializer="glorot_uniform",
             name="kernel",
         )
@@ -231,14 +223,13 @@ class EdgeNetwork(layers.Layer):
     def call(self, inputs):
         atom_features, bond_features, pair_indices = inputs
 
-        bond_features = tf.matmul(bond_features, self.kernel) + self.bias
-
-        bond_features = tf.reshape(bond_features, (-1, self.units)) 
+        bond_features = tf.reshape(bond_features, (-1, self.bond_dim))
 
         atom_features_neighbors = tf.gather(atom_features, pair_indices[:, 1])
-        atom_features_neighbors = tf.reshape(atom_features_neighbors, (-1, self.atom_dim)) 
-        
-        transformed_features = bond_features * atom_features_neighbors
+        atom_features_neighbors = tf.reshape(atom_features_neighbors, (-1, self.atom_dim))
+
+        concat = tf.concat([atom_features_neighbors, bond_features], axis=-1)
+        transformed_features = tf.nn.relu(tf.matmul(concat, self.kernel) + self.bias)
         aggregated_features = tf.math.unsorted_segment_sum(
             transformed_features,
             pair_indices[:, 0],
@@ -255,21 +246,35 @@ class MessagePassing(layers.Layer):
     def build(self, input_shape):
         self.atom_dim = input_shape[0][-1]
         self.bond_dim = input_shape[1][-1]
-        self.message_step = EdgeNetwork(atom_dim=self.atom_dim, bond_dim=self.bond_dim, units=self.units)  
+        # EdgeNetwork concatena [h_vizinho, e_ij], então atom_dim aqui é o
+        # dim real de entrada (pós-projeção p/ units quando há atom_proj).
+        self.message_step = EdgeNetwork(atom_dim=self.units, bond_dim=self.bond_dim, units=self.units)  
         self.pad_length = max(0, self.units - self.atom_dim)
+        if self.atom_dim != self.units:
+            self.atom_proj = layers.Dense(self.units)
+        else:
+            self.atom_proj = None
         self.update_step = layers.GRUCell(self.units)
         self.built = True
 
     def call(self, inputs):
         atom_features, bond_features, pair_indices = inputs
 
-        # KNOWN BUG: this runs a SINGLE message-passing step and never uses
-        # self.steps or self.update_step (the GRUCell). A real MPNN iterates
-        # `steps` times, updating node state through the GRU each hop. Fixing it
-        # correctly also means reworking EdgeNetwork (its elementwise combine
-        # assumes units == atom_dim) and re-validating AUC on the BBBP split.
-        aggregated_features = self.message_step([atom_features, bond_features, pair_indices])
-        return aggregated_features
+        # Projeta/pad estado inicial para `units`.
+        if self.atom_proj is not None:
+            h = self.atom_proj(atom_features)
+        else:
+            h = atom_features
+
+        for _ in range(self.steps):
+            aggregated = self.message_step([h, bond_features, pair_indices])
+            out = self.update_step(aggregated, [h])
+            # GRUCell retorna (output, [new_state]) ou apenas output.
+            if isinstance(out, (list, tuple)):
+                h = out[0]
+            else:
+                h = out
+        return h
     
 class PartitionPadding(layers.Layer):
     def __init__(self, batch_size, **kwargs):
@@ -284,19 +289,25 @@ class PartitionPadding(layers.Layer):
             atom_features, molecule_indicator, self.batch_size
         )
 
-        num_atoms = [tf.shape(f)[0] for f in atom_features_partitioned]
+        # Lote parcial: filtra partições vazias usando shape dinâmico e
+        # recalcula o max dinamicamente (suporta resto do dataset).
+        num_atoms = tf.stack([tf.shape(f)[0] for f in atom_features_partitioned])
         max_num_atoms = tf.reduce_max(num_atoms)
-        atom_features_stacked = tf.stack(
-            [
-                tf.pad(f, [(0, max_num_atoms - n), (0, 0)])
-                for f, n in zip(atom_features_partitioned, num_atoms)
-            ],
-            axis=0,
-        )
+        padded = []
+        for f, n in zip(atom_features_partitioned, tf.unstack(num_atoms)):
+            pad_rows = max_num_atoms - n
+            padded.append(tf.pad(f, [(0, pad_rows), (0, 0)]))
+        atom_features_stacked = tf.stack(padded, axis=0)
 
         gather_indices = tf.where(tf.reduce_sum(atom_features_stacked, (1, 2)) != 0)
         gather_indices = tf.squeeze(gather_indices, axis=-1)
-        return tf.gather(atom_features_stacked, gather_indices, axis=0)
+        # tf.shape dinâmico: se o lote parcial for vazio, retorna vazio.
+        n_kept = tf.shape(gather_indices)[0]
+        return tf.cond(
+            n_kept > 0,
+            lambda: tf.gather(atom_features_stacked, gather_indices, axis=0),
+            lambda: tf.zeros((0, max_num_atoms, tf.shape(atom_features)[-1]), dtype=atom_features.dtype),
+        )
 
 class TransformerEncoderReadout(layers.Layer):
     def __init__(
@@ -359,40 +370,118 @@ def MPNNModel(
     return model
 
 
-mpnn = MPNNModel(
-    atom_dim=x_train[0][0][0].shape[0], bond_dim=x_train[1][0][0].shape[0],
-)
+def _graphs_and_labels(smiles_series, labels_series):
+    """Build aligned (X, y): filter invalid SMILES first, apply to both.
 
-mpnn.compile(
-    loss=keras.losses.BinaryCrossentropy(),
-    optimizer=keras.optimizers.Adam(learning_rate=5e-4),
-    metrics=[keras.metrics.AUC(name="AUC")],
-)
+    `graphs_from_smiles` silently drops unparseable molecules, so naively
+    pairing its output with the unfiltered `y` misaligns labels and breaks
+    on length mismatch. We pre-validate with `molecule_from_smiles`,
+    keep only `valid_idx`, and assert `len(X) == len(y)`.
+    """
+    smiles_list = list(smiles_series)
+    labels = np.asarray(list(labels_series))
+    valid_idx = [
+        i for i, s in enumerate(smiles_list) if molecule_from_smiles(s) is not None
+    ]
+    valid_smiles = [smiles_list[i] for i in valid_idx]
+    x = graphs_from_smiles(valid_smiles)
+    y = labels[valid_idx] if len(valid_idx) else np.asarray([], dtype=np.float32)
+    n_x = int(x[0].shape[0]) if len(valid_smiles) else 0
+    assert n_x == len(y), f"X/y length mismatch: {n_x} graphs vs {len(y)} labels"
+    assert len(y) == len(valid_idx)
+    return x, y
 
-keras.utils.plot_model(mpnn, show_dtype=True, show_shapes=True)
 
-train_dataset = MPNNDataset(x_train, y_train)
-valid_dataset = MPNNDataset(x_valid, y_valid)
-test_dataset = MPNNDataset(x_test, y_test)
+def main():
+    permuted_indices = np.random.permutation(np.arange(df.shape[0]))
 
-history = mpnn.fit(
-    train_dataset,
-    validation_data=valid_dataset,
-    epochs=40,
-    verbose=2,
-    class_weight={0: 2.0, 1: 0.5},
-)
+    train_index = permuted_indices[: int(df.shape[0] * 0.8)]
+    x_train, y_train = _graphs_and_labels(
+        df.iloc[train_index].smiles, df.iloc[train_index].p_np
+    )
 
-plt.figure(figsize=(10, 6))
-plt.plot(history.history["AUC"], label="train AUC")
-plt.plot(history.history["val_AUC"], label="valid AUC")
-plt.xlabel("Epochs", fontsize=16)
-plt.ylabel("AUC", fontsize=16)
-plt.legend(fontsize=16)
+    valid_index = permuted_indices[int(df.shape[0] * 0.8) : int(df.shape[0] * 0.99)]
+    x_valid, y_valid = _graphs_and_labels(
+        df.iloc[valid_index].smiles, df.iloc[valid_index].p_np
+    )
 
-molecules = [molecule_from_smiles(df.smiles.values[index]) for index in test_index]
-y_true = [df.p_np.values[index] for index in test_index]
-y_pred = tf.squeeze(mpnn.predict(test_dataset), axis=1)
+    test_index = permuted_indices[int(df.shape[0] * 0.99) :]
+    x_test, y_test = _graphs_and_labels(
+        df.iloc[test_index].smiles, df.iloc[test_index].p_np
+    )
 
-legends = [f"y_true/y_pred = {y_true[i]}/{y_pred[i]:.2f}" for i in range(len(y_true))]
-MolsToGridImage(molecules, molsPerRow=4, legends=legends)
+    # Testing functions
+    print(f"Nome:\t{df.name[100]}\nSMILES:\t{df.smiles[100]}\nBBBP:\t{df.p_np[100]}")
+    molecule = molecule_from_smiles(df.iloc[100].smiles)
+    if molecule is None:
+        print("SMILES de exemplo inválido.")
+    else:
+        print("Molecula:")
+        print(molecule)
+
+        graph = graph_from_molecule(molecule)
+        if graph is not None:
+            print("Grafo (Incluindo self-loops):")
+            print("\tatom features\t", graph[0].shape)
+            print("\tbond features\t", graph[1].shape)
+            print("\tpair indices\t", graph[2].shape)
+
+    mpnn = MPNNModel(
+        atom_dim=x_train[0][0][0].shape[0], bond_dim=x_train[1][0][0].shape[0],
+    )
+
+    mpnn.compile(
+        loss=keras.losses.BinaryCrossentropy(),
+        optimizer=keras.optimizers.Adam(learning_rate=5e-4),
+        metrics=[keras.metrics.AUC(name="AUC")],
+    )
+
+    keras.utils.plot_model(mpnn, show_dtype=True, show_shapes=True)
+
+    train_dataset = MPNNDataset(x_train, y_train)
+    valid_dataset = MPNNDataset(x_valid, y_valid)
+    test_dataset = MPNNDataset(x_test, y_test)
+
+    # class_weight balanceado pela prevalência real do treino (em vez de
+    # {0: 2.0, 1: 0.5} fixo): total / (n_classes * n_classe).
+    _y_arr = np.asarray(y_train).ravel()
+    _counts = Counter(int(v) for v in _y_arr)
+    _total = int(len(_y_arr))
+    class_weight = {
+        cls: _total / (len(_counts) * n) for cls, n in _counts.items() if n > 0
+    }
+    print(f"Prevalência treino: {dict(_counts)} -> class_weight={class_weight}")
+
+    history = mpnn.fit(
+        train_dataset,
+        validation_data=valid_dataset,
+        epochs=40,
+        verbose=2,
+        class_weight=class_weight,
+    )
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(history.history["AUC"], label="train AUC")
+    plt.plot(history.history["val_AUC"], label="valid AUC")
+    plt.xlabel("Epochs", fontsize=16)
+    plt.ylabel("AUC", fontsize=16)
+    plt.legend(fontsize=16)
+
+    molecules_all = [molecule_from_smiles(df.smiles.values[index]) for index in test_index]
+    aligned = [
+        (mol, df.p_np.values[idx])
+        for idx, mol in zip(test_index, molecules_all)
+        if mol is not None
+    ]
+    molecules = [m for m, _ in aligned]
+    y_true = [y for _, y in aligned]
+    assert len(molecules) == len(y_true), "test molecules/y_true mismatch"
+    y_pred = tf.squeeze(mpnn.predict(test_dataset), axis=1)
+
+    legends = [f"y_true/y_pred = {y_true[i]}/{y_pred[i]:.2f}" for i in range(len(y_true))]
+    MolsToGridImage(molecules, molsPerRow=4, legends=legends)
+    return history
+
+
+if __name__ == "__main__":
+    main()

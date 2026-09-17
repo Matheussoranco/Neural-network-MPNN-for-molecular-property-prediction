@@ -1,0 +1,7 @@
+# Frozen study stack — see README (multi-hop MPNN, BBBP).
+tensorflow==2.19.0
+keras==3.8.0
+pandas==2.2.2
+numpy==1.26.4
+matplotlib==3.8.4
+rdkit-pypi==2024.3.5
